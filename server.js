@@ -11,7 +11,16 @@ const PORT = process.env.PORT || 3001;
 const YT_API_KEY = process.env.YOUTUBE_API_KEY;
 const YTDLP = path.join(__dirname, "yt-dlp.exe");
 
-app.use(cors());
+app.use(cors({
+  origin: [
+    "http://localhost:5173",
+    "https://soundwave-chi.vercel.app",
+    "https://soundwave-git-main-debajanigouda2005-9844s-projects.vercel.app",
+    /\.vercel\.app$/
+  ],
+  methods: ["GET", "POST", "DELETE"],
+  credentials: true
+}));
 app.use(express.json());
 
 // ── URL CACHE — stores pre-fetched stream URLs ──────────
