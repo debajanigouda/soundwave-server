@@ -61,7 +61,21 @@ function fetchStreamUrl(videoId) {
 }
 
 // ── SEARCH SONGS ────────────────────────────────────────
-app.get("/api/search", async (req, res) => {
+app.get("/api/stream/:videoId", async (req, res) => {
+  try {
+    const { videoId } = req.params;
+    // Return YouTube embed URL that works everywhere
+    const embedUrl = `https://www.youtube.com/embed/${videoId}?autoplay=1&controls=0`;
+    res.json({ 
+      success: true, 
+      videoId,
+      embedUrl,
+      watchUrl: `https://www.youtube.com/watch?v=${videoId}`
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
   try {
     const query = req.query.q;
     if (!query) return res.status(400).json({ error: "Query required" });
