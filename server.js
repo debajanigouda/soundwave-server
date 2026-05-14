@@ -12,7 +12,7 @@ const YT_API_KEY = process.env.YOUTUBE_API_KEY;
 
 // ✅ Use 'yt-dlp' (no .exe) for Linux on Render
 const IS_LINUX = process.platform !== "win32";
-const YTDLP = IS_LINUX ? "yt-dlp" : path.join(__dirname, "yt-dlp.exe");
+const YTDLP = IS_LINUX ? path.join(__dirname, "yt-dlp") : path.join(__dirname, "yt-dlp.exe");
 
 app.use(cors({
   origin: [
