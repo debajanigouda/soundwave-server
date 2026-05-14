@@ -8,7 +8,25 @@ const fs = require("fs");
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-const YT_API_KEY = process.env.YOUTUBE_API_KEY;
+
+// Multiple API keys for rotation — 40,000 units/day total
+const YT_API_KEYS = [
+  process.env.YOUTUBE_API_KEY,
+  process.env.YOUTUBE_API_KEY_2,
+  process.env.YOUTUBE_API_KEY_3,
+  process.env.YOUTUBE_API_KEY_4,
+].filter(Boolean);
+
+let currentKeyIndex = 0;
+
+function getApiKey() {
+  return YT_API_KEYS[currentKeyIndex % YT_API_KEYS.length];
+}
+
+function rotateKey() {
+  currentKeyIndex = (currentKeyIndex + 1) % YT_API_KEYS.length;
+  console.log(`🔄 Rotated to API key ${currentKeyIndex + 1}`);
+}
 
 const IS_LINUX = process.platform !== "win32";
 const YTDLP = IS_LINUX ? path.join(__dirname, "yt-dlp") : path.join(__dirname, "yt-dlp.exe");
@@ -58,10 +76,9 @@ function fetchStreamUrl(videoId) {
 // ── TRENDING CACHE (6 hours) ──────────────────────────────
 let trendingCache = null;
 let trendingCacheTime = 0;
-const TRENDING_TTL = 1000 * 60 * 60 * 6; // 6 hours
+const TRENDING_TTL = 1000 * 60 * 60 * 6;
 
 async function fetchTrending() {
-  // Return cached if still fresh
   if (trendingCache && Date.now() - trendingCacheTime < TRENDING_TTL) {
     console.log("📦 Serving trending from cache");
     return trendingCache;
@@ -74,76 +91,85 @@ async function fetchTrending() {
     "top english songs 2025 official audio",
   ];
   const query = queries[Math.floor(Math.random() * queries.length)];
-  const response = await axios.get("https://www.googleapis.com/youtube/v3/search", {
-    params: {
-      part: "snippet",
-      q: query,
-      type: "video",
-      videoCategoryId: "10",
-      maxResults: 20,
-      order: "viewCount",
-      key: YT_API_KEY,
-    },
-  });
-  const songs = response.data.items.map((item) => ({
-    id: item.id.videoId,
-    title: item.snippet.title
-      .replace(/\(Official.*?\)/gi, "")
-      .replace(/\[Official.*?\]/gi, "")
-      .replace(/Official (Audio|Video|Music Video)/gi, "")
-      .replace(/\|.*$/g, "")
-      .trim(),
-    artist: item.snippet.channelTitle.replace(/ - Topic$/i, "").trim(),
-    thumbnail: item.snippet.thumbnails.medium.url,
-    youtubeId: item.id.videoId,
-  }));
 
-  // Save to cache
-  trendingCache = songs;
-  trendingCacheTime = Date.now();
-  console.log(`✅ Trending cached — ${songs.length} songs for 6 hours`);
-  return songs;
+  try {
+    const response = await axios.get("https://www.googleapis.com/youtube/v3/search", {
+      params: {
+        part: "snippet",
+        q: query,
+        type: "video",
+        videoCategoryId: "10",
+        maxResults: 20,
+        order: "viewCount",
+        key: getApiKey(),
+      },
+    });
+    const songs = response.data.items.map((item) => ({
+      id: item.id.videoId,
+      title: item.snippet.title
+        .replace(/\(Official.*?\)/gi, "")
+        .replace(/\[Official.*?\]/gi, "")
+        .replace(/Official (Audio|Video|Music Video)/gi, "")
+        .replace(/\|.*$/g, "")
+        .trim(),
+      artist: item.snippet.channelTitle.replace(/ - Topic$/i, "").trim(),
+      thumbnail: item.snippet.thumbnails.medium.url,
+      youtubeId: item.id.videoId,
+    }));
+    trendingCache = songs;
+    trendingCacheTime = Date.now();
+    console.log(`✅ Trending cached — ${songs.length} songs for 6 hours`);
+    return songs;
+  } catch (err) {
+    // If current key fails, rotate and try next
+    rotateKey();
+    throw err;
+  }
 }
 
 // ── SEARCH CACHE (30 mins) ────────────────────────────────
 const searchCache = new Map();
-const SEARCH_TTL = 1000 * 60 * 30; // 30 minutes
+const SEARCH_TTL = 1000 * 60 * 30;
 
 async function fetchSearch(query) {
-  const key = query.toLowerCase().trim();
-  const cached = searchCache.get(key);
+  const cacheKey = query.toLowerCase().trim();
+  const cached = searchCache.get(cacheKey);
   if (cached && Date.now() - cached.time < SEARCH_TTL) {
     console.log(`📦 Serving search "${query}" from cache`);
     return cached.songs;
   }
 
   console.log(`🔄 Searching YouTube for: ${query}`);
-  const response = await axios.get("https://www.googleapis.com/youtube/v3/search", {
-    params: {
-      part: "snippet",
-      q: query + " official audio",
-      type: "video",
-      videoCategoryId: "10",
-      maxResults: 20,
-      key: YT_API_KEY,
-    },
-  });
-  const songs = response.data.items.map((item) => ({
-    id: item.id.videoId,
-    title: item.snippet.title
-      .replace(/\(Official.*?\)/gi, "")
-      .replace(/\[Official.*?\]/gi, "")
-      .replace(/Official (Audio|Video|Music Video)/gi, "")
-      .replace(/\|.*$/g, "")
-      .trim(),
-    artist: item.snippet.channelTitle.replace(/ - Topic$/i, "").trim(),
-    thumbnail: item.snippet.thumbnails.medium.url,
-    youtubeId: item.id.videoId,
-  }));
-
-  searchCache.set(key, { songs, time: Date.now() });
-  console.log(`✅ Search "${query}" cached for 30 mins`);
-  return songs;
+  try {
+    const response = await axios.get("https://www.googleapis.com/youtube/v3/search", {
+      params: {
+        part: "snippet",
+        q: query + " official audio",
+        type: "video",
+        videoCategoryId: "10",
+        maxResults: 20,
+        key: getApiKey(),
+      },
+    });
+    const songs = response.data.items.map((item) => ({
+      id: item.id.videoId,
+      title: item.snippet.title
+        .replace(/\(Official.*?\)/gi, "")
+        .replace(/\[Official.*?\]/gi, "")
+        .replace(/Official (Audio|Video|Music Video)/gi, "")
+        .replace(/\|.*$/g, "")
+        .trim(),
+      artist: item.snippet.channelTitle.replace(/ - Topic$/i, "").trim(),
+      thumbnail: item.snippet.thumbnails.medium.url,
+      youtubeId: item.id.videoId,
+    }));
+    searchCache.set(cacheKey, { songs, time: Date.now() });
+    console.log(`✅ Search "${query}" cached for 30 mins`);
+    return songs;
+  } catch (err) {
+    rotateKey();
+    throw err;
+  }
 }
 
 // ── ROUTES ────────────────────────────────────────────────
@@ -166,7 +192,6 @@ app.get("/api/trending", async (req, res) => {
     res.json({ success: true, songs });
     songs.slice(0, 5).forEach(s => fetchStreamUrl(s.youtubeId).catch(() => {}));
   } catch (err) {
-    // If API fails, return cached even if expired
     if (trendingCache) {
       console.log("⚠️ API failed, serving stale cache");
       return res.json({ success: true, songs: trendingCache, stale: true });
@@ -201,21 +226,22 @@ app.get("/api/health", (req, res) => {
   res.json({
     status: "✅ SoundWave running!",
     platform: process.platform,
-    youtube: YT_API_KEY ? "✅ Connected" : "❌ Missing",
+    youtube: `✅ ${YT_API_KEYS.length} keys loaded`,
+    currentKey: currentKeyIndex + 1,
     ytdlp: YTDLP,
     urlCache: urlCache.size,
     searchCache: searchCache.size,
-    trendingCache: trendingCache ? `✅ ${trendingCache.length} songs, ${trendingAge} mins old` : "❌ Empty",
+    trendingCache: trendingCache
+      ? `✅ ${trendingCache.length} songs, ${trendingAge} mins old`
+      : "❌ Empty",
   });
 });
 
 app.listen(PORT, () => {
   console.log(`\n🎵 SoundWave Server → http://localhost:${PORT}`);
-  console.log(`🔑 YouTube API: ${YT_API_KEY ? "✅ Connected" : "❌ Missing!"}`);
+  console.log(`🔑 YouTube API: ${YT_API_KEYS.length} keys loaded`);
   console.log(`🖥️  Platform: ${process.platform}`);
   console.log(`🎬 yt-dlp: ${YTDLP}`);
   console.log(`⚡ Caching: ✅ Trending=6h, Search=30min, Stream=1h\n`);
-
-  // Pre-warm trending cache on startup
-  fetchTrending().catch(err => console.log("⚠️ Startup trending prefetch failed:", err.message));
+  fetchTrending().catch(err => console.log("⚠️ Startup prefetch failed:", err.message));
 });
