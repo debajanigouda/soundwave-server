@@ -238,6 +238,14 @@ app.get("/api/health", (req, res) => {
   });
 });
 
+// ── KEEP ALIVE — ping self every 14 minutes ──────────────
+setInterval(() => {
+  const url = "https://soundwave-server.onrender.com/api/health";
+  fetch(url)
+    .then(() => console.log("🏓 Keep-alive ping sent"))
+    .catch(() => console.log("⚠️ Keep-alive ping failed"));
+}, 14 * 60 * 1000); // every 14 minutes
+
 app.listen(PORT, () => {
   console.log(`\n🎵 SoundWave Server → http://localhost:${PORT}`);
   console.log(`🔑 YouTube API: ${YT_API_KEYS.length} keys loaded`);
