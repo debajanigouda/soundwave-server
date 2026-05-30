@@ -54,6 +54,115 @@ function getCached(videoId) {
   return entry.url;
 }
 
+// ── TITLE CLEANER ─────────────────────────────────────────
+function cleanTitle(title) {
+  return title
+    .replace(/\(official.*?\)/gi, "")
+    .replace(/\[official.*?\]/gi, "")
+    .replace(/official (audio|video|music video|lyric video|lyrics)/gi, "")
+    .replace(/\(audio\)/gi, "")
+    .replace(/\(lyrics?\)/gi, "")
+    .replace(/\(full video\)/gi, "")
+    .replace(/\(full song\)/gi, "")
+    .replace(/ft\..*?(?=\s*[-|]|$)/gi, s => s) // keep ft. artist
+    .replace(/\|.*$/g, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+// ── ARTIST CLEANER ────────────────────────────────────────
+function cleanArtist(channel) {
+  return channel
+    .replace(/ - Topic$/i, "")
+    .replace(/VEVO$/i, "")
+    .replace(/official$/i, "")
+    .trim();
+}
+
+// ── SONG FILTER & DEDUPLICATOR ────────────────────────────
+function filterSongs(songs, query) {
+  const queryLower = query.toLowerCase().trim();
+
+  // ✅ Priority scoring — higher = better
+  const scored = songs.map(song => {
+    let score = 0;
+    const title = song.originalTitle;
+    const channel = song.channelTitle;
+
+    // BOOST: Official channels
+    if (channel.includes("vevo")) score += 15;
+    if (channel.includes("official")) score += 10;
+    if (channel.includes("t-series")) score += 8;
+    if (channel.includes("sony music")) score += 8;
+    if (channel.includes("universal music")) score += 8;
+    if (channel.includes("zee music")) score += 8;
+    if (channel.includes("saregama")) score += 8;
+    if (channel.includes("tips official")) score += 8;
+    if (channel.includes("yrf")) score += 8;
+    if (channel.includes("dharma")) score += 7;
+
+    // BOOST: Official in title
+    if (title.includes("official audio")) score += 12;
+    if (title.includes("official video")) score += 10;
+    if (title.includes("official music video")) score += 10;
+
+    // BOOST: Title matches query closely
+    if (title.includes(queryLower)) score += 8;
+
+    // PENALTY: Low quality versions
+    if (title.includes("8d audio")) score -= 20;
+    if (title.includes("lofi")) score -= 15;
+    if (title.includes("lo-fi")) score -= 15;
+    if (title.includes("remix")) score -= 15;
+    if (title.includes("unplugged")) score -= 10;
+    if (title.includes("cover")) score -= 20;
+    if (title.includes("karaoke")) score -= 25;
+    if (title.includes("ringtone")) score -= 25;
+    if (title.includes("instrumental")) score -= 15;
+    if (title.includes("slowed")) score -= 20;
+    if (title.includes("reverb")) score -= 20;
+    if (title.includes("bass boosted")) score -= 20;
+    if (title.includes("reaction")) score -= 30;
+    if (title.includes("lyrics video") && !title.includes("official")) score -= 5;
+    if (title.includes("lyric video") && !title.includes("official")) score -= 5;
+    if (title.includes("full album")) score -= 15;
+    if (title.includes("jukebox")) score -= 10;
+    if (title.includes("mashup")) score -= 20;
+    if (title.includes("tribute")) score -= 25;
+    if (title.includes("status")) score -= 20;
+    if (title.includes("whatsapp")) score -= 25;
+
+    return { ...song, score };
+  });
+
+  // ✅ Sort by score — best first
+  scored.sort((a, b) => b.score - a.score);
+
+  // ✅ Remove duplicates — keep only best version of same song
+  const seen = new Set();
+  const unique = [];
+
+  for (const song of scored) {
+    // Create a simplified key to detect duplicates
+    const key = song.title
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .split(" ")
+      .slice(0, 4) // first 4 words
+      .join(" ");
+
+    if (!seen.has(key)) {
+      seen.add(key);
+      unique.push(song);
+    }
+  }
+
+  // ✅ Remove score field before sending
+  return unique.map(({ score, originalTitle, channelTitle, ...song }) => song);
+}
+
 function setCache(videoId, url) {
   urlCache.set(videoId, { url, time: Date.now() });
 }
@@ -92,7 +201,20 @@ async function fetchTrending() {
     "top english songs 2025 official audio",
   ];
   const query = queries[Math.floor(Math.random() * queries.length)];
+const songs = response.data.items
+  .map((item) => ({
+    id: item.id.videoId,
+    title: cleanTitle(item.snippet.title),
+    artist: cleanArtist(item.snippet.channelTitle),
+    thumbnail: item.snippet.thumbnails.high?.url || item.snippet.thumbnails.medium.url,
+    youtubeId: item.id.videoId,
+    originalTitle: item.snippet.title.toLowerCase(),
+    channelTitle: item.snippet.channelTitle.toLowerCase(),
+  }));
 
+const filtered = filterSongs(songs, query);
+// Save to cache
+trendingCache = filtered.map(({ score, originalTitle, channelTitle, ...s }) => s);
   try {
     const response = await axios.get("https://www.googleapis.com/youtube/v3/search", {
       params: {
@@ -179,10 +301,36 @@ app.get("/api/search", async (req, res) => {
   try {
     const query = req.query.q;
     if (!query) return res.status(400).json({ error: "Query required" });
-    const songs = await fetchSearch(query);
-    res.json({ success: true, songs });
-    songs.slice(0, 3).forEach(s => fetchStreamUrl(s.youtubeId).catch(() => {}));
+
+    const response = await axios.get("https://www.googleapis.com/youtube/v3/search", {
+      params: {
+        part: "snippet",
+        q: query + " official audio",
+        type: "video",
+        videoCategoryId: "10",
+        maxResults: 50, // fetch more to filter better
+        order: "relevance",
+        key: getApiKey(),
+      },
+    });
+
+    const allSongs = response.data.items.map((item) => ({
+      id: item.id.videoId,
+      title: cleanTitle(item.snippet.title),
+      artist: cleanArtist(item.snippet.channelTitle),
+      thumbnail: item.snippet.thumbnails.high?.url || item.snippet.thumbnails.medium.url,
+      youtubeId: item.id.videoId,
+      originalTitle: item.snippet.title.toLowerCase(),
+      channelTitle: item.snippet.channelTitle.toLowerCase(),
+    }));
+
+    // ✅ Filter out duplicates and low quality results
+    const filtered = filterSongs(allSongs, query);
+
+    res.json({ success: true, songs: filtered.slice(0, 20) });
+    filtered.slice(0, 3).forEach(s => fetchStreamUrl(s.youtubeId).catch(() => {}));
   } catch (err) {
+    rotateKey();
     res.status(500).json({ success: false, error: err.message });
   }
 });
