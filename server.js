@@ -81,85 +81,85 @@ function cleanArtist(channel) {
 
 // ── SONG FILTER & DEDUPLICATOR ────────────────────────────
 function filterSongs(songs, query) {
-  const queryLower = query.toLowerCase().trim();
+  const queryLower = (query || "").toLowerCase().trim();
 
-  // ✅ Priority scoring — higher = better
   const scored = songs.map(song => {
-    let score = 0;
-    const title = song.originalTitle;
-    const channel = song.channelTitle;
+    let score = 100; // start with base score
+    const title = song.originalTitle || "";
+    const channel = song.channelTitle || "";
 
-    // BOOST: Official channels
-    if (channel.includes("vevo")) score += 15;
+    // ✅ BOOST official channels
+    if (channel.includes("vevo")) score += 20;
+    if (channel.includes("t-series")) score += 15;
+    if (channel.includes("sony music")) score += 15;
+    if (channel.includes("zee music")) score += 15;
+    if (channel.includes("saregama")) score += 15;
+    if (channel.includes("tips official")) score += 15;
+    if (channel.includes("yrf")) score += 15;
+    if (channel.includes("universal music")) score += 15;
+    if (channel.includes("dharma")) score += 12;
     if (channel.includes("official")) score += 10;
-    if (channel.includes("t-series")) score += 8;
-    if (channel.includes("sony music")) score += 8;
-    if (channel.includes("universal music")) score += 8;
-    if (channel.includes("zee music")) score += 8;
-    if (channel.includes("saregama")) score += 8;
-    if (channel.includes("tips official")) score += 8;
-    if (channel.includes("yrf")) score += 8;
-    if (channel.includes("dharma")) score += 7;
+    if (channel.includes("music")) score += 5;
 
-    // BOOST: Official in title
-    if (title.includes("official audio")) score += 12;
-    if (title.includes("official video")) score += 10;
-    if (title.includes("official music video")) score += 10;
+    // ✅ BOOST official in title
+    if (title.includes("official audio")) score += 15;
+    if (title.includes("official video")) score += 12;
+    if (title.includes("official music video")) score += 12;
 
-    // BOOST: Title matches query closely
-    if (title.includes(queryLower)) score += 8;
+    // ✅ BOOST if title matches query
+    if (queryLower && title.includes(queryLower)) score += 10;
 
-    // PENALTY: Low quality versions
-    if (title.includes("8d audio")) score -= 20;
-    if (title.includes("lofi")) score -= 15;
-    if (title.includes("lo-fi")) score -= 15;
-    if (title.includes("remix")) score -= 15;
-    if (title.includes("unplugged")) score -= 10;
-    if (title.includes("cover")) score -= 20;
-    if (title.includes("karaoke")) score -= 25;
-    if (title.includes("ringtone")) score -= 25;
-    if (title.includes("instrumental")) score -= 15;
-    if (title.includes("slowed")) score -= 20;
-    if (title.includes("reverb")) score -= 20;
-    if (title.includes("bass boosted")) score -= 20;
-    if (title.includes("reaction")) score -= 30;
-    if (title.includes("lyrics video") && !title.includes("official")) score -= 5;
-    if (title.includes("lyric video") && !title.includes("official")) score -= 5;
-    if (title.includes("full album")) score -= 15;
-    if (title.includes("jukebox")) score -= 10;
+    // ⚠️ SOFT penalty — don't remove, just rank lower
+    if (title.includes("8d audio")) score -= 30;
+    if (title.includes("lofi") || title.includes("lo-fi")) score -= 25;
+    if (title.includes("remix")) score -= 20;
+    if (title.includes("cover")) score -= 25;
+    if (title.includes("karaoke")) score -= 30;
+    if (title.includes("ringtone")) score -= 30;
+    if (title.includes("instrumental")) score -= 20;
+    if (title.includes("slowed")) score -= 25;
+    if (title.includes("reverb")) score -= 25;
+    if (title.includes("bass boost")) score -= 25;
+    if (title.includes("reaction")) score -= 35;
     if (title.includes("mashup")) score -= 20;
     if (title.includes("tribute")) score -= 25;
-    if (title.includes("status")) score -= 20;
-    if (title.includes("whatsapp")) score -= 25;
+    if (title.includes("whatsapp status")) score -= 35;
+    if (title.includes("unplugged")) score -= 15;
 
     return { ...song, score };
   });
 
-  // ✅ Sort by score — best first
+  // Sort by score
   scored.sort((a, b) => b.score - a.score);
 
-  // ✅ Remove duplicates — keep only best version of same song
+  // ✅ Remove duplicates — keep best version
   const seen = new Set();
   const unique = [];
 
   for (const song of scored) {
-    // Create a simplified key to detect duplicates
-    const key = song.title
+    // Normalize title for duplicate detection
+    const normalized = (song.title || "")
       .toLowerCase()
       .replace(/[^a-z0-9\s]/g, "")
       .replace(/\s+/g, " ")
-      .trim()
-      .split(" ")
-      .slice(0, 4) // first 4 words
-      .join(" ");
+      .trim();
 
-    if (!seen.has(key)) {
-      seen.add(key);
+    // Use first 3 words as key
+    const words = normalized.split(" ").slice(0, 3).join(" ");
+
+    if (words.length > 2 && !seen.has(words)) {
+      seen.add(words);
       unique.push(song);
+    } else if (words.length <= 2) {
+      // Very short titles — use full title
+      if (!seen.has(normalized)) {
+        seen.add(normalized);
+        unique.push(song);
+      }
     }
   }
 
-  // ✅ Remove score field before sending
+  // Clean up internal fields
   return unique.map(({ score, originalTitle, channelTitle, ...song }) => song);
 }
 
