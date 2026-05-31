@@ -97,8 +97,6 @@ function filterSongs(songs, query) {
       else if (daysOld < 14) score += 10;
       else if (daysOld < 30) score += 5;
     }
-    const title = song.originalTitle;
-    const channel = song.channelTitle;
 
     // BOOST: Official channels
     if (channel.includes("vevo")) score += 15;
@@ -145,7 +143,7 @@ function filterSongs(songs, query) {
 
     return { ...song, score };
   });
-
+  
   // ✅ Sort by score — best first
   scored.sort((a, b) => b.score - a.score);
 
