@@ -81,85 +81,96 @@ function cleanArtist(channel) {
 
 // ── SONG FILTER & DEDUPLICATOR ────────────────────────────
 function filterSongs(songs, query) {
-  const queryLower = (query || "").toLowerCase().trim();
+  const queryLower = query.toLowerCase().trim();
 
+  // ✅ Priority scoring — higher = better
+  const now = Date.now();
   const scored = songs.map(song => {
-    let score = 100; // start with base score
-    const title = song.originalTitle || "";
-    const channel = song.channelTitle || "";
+    let score = 100;
 
-    // ✅ BOOST official channels
-    if (channel.includes("vevo")) score += 20;
-    if (channel.includes("t-series")) score += 15;
-    if (channel.includes("sony music")) score += 15;
-    if (channel.includes("zee music")) score += 15;
-    if (channel.includes("saregama")) score += 15;
-    if (channel.includes("tips official")) score += 15;
-    if (channel.includes("yrf")) score += 15;
-    if (channel.includes("universal music")) score += 15;
-    if (channel.includes("dharma")) score += 12;
+    // ✅ BOOST very recent songs — newer = more trending
+    if (song.publishedAt) {
+      const age = now - new Date(song.publishedAt).getTime();
+      const daysOld = age / (1000 * 60 * 60 * 24);
+      if (daysOld < 3) score += 30;
+      else if (daysOld < 7) score += 20;
+      else if (daysOld < 14) score += 10;
+      else if (daysOld < 30) score += 5;
+    }
+    const title = song.originalTitle;
+    const channel = song.channelTitle;
+
+    // BOOST: Official channels
+    if (channel.includes("vevo")) score += 15;
     if (channel.includes("official")) score += 10;
-    if (channel.includes("music")) score += 5;
+    if (channel.includes("t-series")) score += 8;
+    if (channel.includes("sony music")) score += 8;
+    if (channel.includes("universal music")) score += 8;
+    if (channel.includes("zee music")) score += 8;
+    if (channel.includes("saregama")) score += 8;
+    if (channel.includes("tips official")) score += 8;
+    if (channel.includes("yrf")) score += 8;
+    if (channel.includes("dharma")) score += 7;
 
-    // ✅ BOOST official in title
-    if (title.includes("official audio")) score += 15;
-    if (title.includes("official video")) score += 12;
-    if (title.includes("official music video")) score += 12;
+    // BOOST: Official in title
+    if (title.includes("official audio")) score += 12;
+    if (title.includes("official video")) score += 10;
+    if (title.includes("official music video")) score += 10;
 
-    // ✅ BOOST if title matches query
-    if (queryLower && title.includes(queryLower)) score += 10;
+    // BOOST: Title matches query closely
+    if (title.includes(queryLower)) score += 8;
 
-    // ⚠️ SOFT penalty — don't remove, just rank lower
-    if (title.includes("8d audio")) score -= 30;
-    if (title.includes("lofi") || title.includes("lo-fi")) score -= 25;
-    if (title.includes("remix")) score -= 20;
-    if (title.includes("cover")) score -= 25;
-    if (title.includes("karaoke")) score -= 30;
-    if (title.includes("ringtone")) score -= 30;
-    if (title.includes("instrumental")) score -= 20;
-    if (title.includes("slowed")) score -= 25;
-    if (title.includes("reverb")) score -= 25;
-    if (title.includes("bass boost")) score -= 25;
-    if (title.includes("reaction")) score -= 35;
+    // PENALTY: Low quality versions
+    if (title.includes("8d audio")) score -= 20;
+    if (title.includes("lofi")) score -= 15;
+    if (title.includes("lo-fi")) score -= 15;
+    if (title.includes("remix")) score -= 15;
+    if (title.includes("unplugged")) score -= 10;
+    if (title.includes("cover")) score -= 20;
+    if (title.includes("karaoke")) score -= 25;
+    if (title.includes("ringtone")) score -= 25;
+    if (title.includes("instrumental")) score -= 15;
+    if (title.includes("slowed")) score -= 20;
+    if (title.includes("reverb")) score -= 20;
+    if (title.includes("bass boosted")) score -= 20;
+    if (title.includes("reaction")) score -= 30;
+    if (title.includes("lyrics video") && !title.includes("official")) score -= 5;
+    if (title.includes("lyric video") && !title.includes("official")) score -= 5;
+    if (title.includes("full album")) score -= 15;
+    if (title.includes("jukebox")) score -= 10;
     if (title.includes("mashup")) score -= 20;
     if (title.includes("tribute")) score -= 25;
-    if (title.includes("whatsapp status")) score -= 35;
-    if (title.includes("unplugged")) score -= 15;
+    if (title.includes("status")) score -= 20;
+    if (title.includes("whatsapp")) score -= 25;
 
     return { ...song, score };
   });
 
-  // Sort by score
+  // ✅ Sort by score — best first
   scored.sort((a, b) => b.score - a.score);
 
-  // ✅ Remove duplicates — keep best version
+  // ✅ Remove duplicates — keep only best version of same song
   const seen = new Set();
   const unique = [];
 
   for (const song of scored) {
-    // Normalize title for duplicate detection
-    const normalized = (song.title || "")
+    // Create a simplified key to detect duplicates
+    const key = song.title
       .toLowerCase()
       .replace(/[^a-z0-9\s]/g, "")
       .replace(/\s+/g, " ")
-      .trim();
+      .trim()
+      .split(" ")
+      .slice(0, 4) // first 4 words
+      .join(" ");
 
-    // Use first 3 words as key
-    const words = normalized.split(" ").slice(0, 3).join(" ");
-
-    if (words.length > 2 && !seen.has(words)) {
-      seen.add(words);
+    if (!seen.has(key)) {
+      seen.add(key);
       unique.push(song);
-    } else if (words.length <= 2) {
-      // Very short titles — use full title
-      if (!seen.has(normalized)) {
-        seen.add(normalized);
-        unique.push(song);
-      }
     }
   }
 
-  // Clean up internal fields
+  // ✅ Remove score field before sending
   return unique.map(({ score, originalTitle, channelTitle, ...song }) => song);
 }
 
@@ -194,57 +205,125 @@ async function fetchTrending() {
     return trendingCache;
   }
 
-  console.log("🔄 Fetching fresh trending from YouTube API...");
-  const queries = [
-    "top hindi songs 2025 official audio",
-    "trending bollywood 2025",
-    "top english songs 2025 official audio",
-  ];
-  const query = queries[Math.floor(Math.random() * queries.length)];
-const songs = response.data.items
-  .map((item) => ({
-    id: item.id.videoId,
-    title: cleanTitle(item.snippet.title),
-    artist: cleanArtist(item.snippet.channelTitle),
-    thumbnail: item.snippet.thumbnails.high?.url || item.snippet.thumbnails.medium.url,
-    youtubeId: item.id.videoId,
-    originalTitle: item.snippet.title.toLowerCase(),
-    channelTitle: item.snippet.channelTitle.toLowerCase(),
-  }));
+  console.log("🔄 Fetching REAL trending songs...");
 
-const filtered = filterSongs(songs, query);
-// Save to cache
-trendingCache = filtered.map(({ score, originalTitle, channelTitle, ...s }) => s);
+  // Last 30 days only — truly recent
+  const last30days = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  const last7days = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
   try {
-    const response = await axios.get("https://www.googleapis.com/youtube/v3/search", {
-      params: {
-        part: "snippet",
-        q: query,
-        type: "video",
-        videoCategoryId: "10",
-        maxResults: 20,
-        order: "viewCount",
-        key: getApiKey(),
-      },
-    });
-    const songs = response.data.items.map((item) => ({
-      id: item.id.videoId,
-      title: item.snippet.title
-        .replace(/\(Official.*?\)/gi, "")
-        .replace(/\[Official.*?\]/gi, "")
-        .replace(/Official (Audio|Video|Music Video)/gi, "")
-        .replace(/\|.*$/g, "")
-        .trim(),
-      artist: item.snippet.channelTitle.replace(/ - Topic$/i, "").trim(),
-      thumbnail: item.snippet.thumbnails.medium.url,
-      youtubeId: item.id.videoId,
-    }));
-    trendingCache = songs;
+    // Fetch from multiple regions in parallel
+    const [india7, india30, global7, punjabi, south] = await Promise.all([
+
+      // 🇮🇳 India — last 7 days most viewed
+      axios.get("https://www.googleapis.com/youtube/v3/search", {
+        params: {
+          part: "snippet",
+          type: "video",
+          videoCategoryId: "10",
+          regionCode: "IN",
+          relevanceLanguage: "hi",
+          order: "viewCount",
+          publishedAfter: last7days,
+          maxResults: 10,
+          key: getApiKey(),
+        },
+      }).catch(() => null),
+
+      // 🇮🇳 India — last 30 days most viewed
+      axios.get("https://www.googleapis.com/youtube/v3/search", {
+        params: {
+          part: "snippet",
+          type: "video",
+          videoCategoryId: "10",
+          regionCode: "IN",
+          order: "viewCount",
+          publishedAfter: last30days,
+          maxResults: 15,
+          key: getApiKey(),
+        },
+      }).catch(() => null),
+
+      // 🌍 Global — last 7 days most viewed
+      axios.get("https://www.googleapis.com/youtube/v3/search", {
+        params: {
+          part: "snippet",
+          type: "video",
+          videoCategoryId: "10",
+          regionCode: "US",
+          order: "viewCount",
+          publishedAfter: last7days,
+          maxResults: 8,
+          key: getApiKey(),
+        },
+      }).catch(() => null),
+
+      // 🎵 Punjabi — last 30 days
+      axios.get("https://www.googleapis.com/youtube/v3/search", {
+        params: {
+          part: "snippet",
+          type: "video",
+          videoCategoryId: "10",
+          regionCode: "IN",
+          relevanceLanguage: "pa",
+          order: "viewCount",
+          publishedAfter: last30days,
+          maxResults: 8,
+          key: getApiKey(),
+        },
+      }).catch(() => null),
+
+      // 🎬 South India — last 30 days
+      axios.get("https://www.googleapis.com/youtube/v3/search", {
+        params: {
+          part: "snippet",
+          type: "video",
+          videoCategoryId: "10",
+          regionCode: "IN",
+          relevanceLanguage: "ta",
+          order: "viewCount",
+          publishedAfter: last30days,
+          maxResults: 8,
+          key: getApiKey(),
+        },
+      }).catch(() => null),
+    ]);
+
+    // Combine all results
+    let allSongs = [];
+    const responses = [india7, india30, global7, punjabi, south];
+
+    for (const response of responses) {
+      if (!response?.data?.items) continue;
+      const songs = response.data.items.map(item => ({
+        id: item.id.videoId,
+        title: cleanTitle(item.snippet.title),
+        artist: cleanArtist(item.snippet.channelTitle),
+        thumbnail: item.snippet.thumbnails.high?.url ||
+          item.snippet.thumbnails.medium?.url,
+        youtubeId: item.id.videoId,
+        originalTitle: item.snippet.title.toLowerCase(),
+        channelTitle: item.snippet.channelTitle.toLowerCase(),
+        publishedAt: item.snippet.publishedAt,
+      }));
+      allSongs = [...allSongs, ...songs];
+    }
+
+    console.log(`📊 Total raw songs fetched: ${allSongs.length}`);
+
+    // Filter and deduplicate
+    const filtered = filterSongs(allSongs, "");
+
+    // Save to cache — clean up internal fields
+    trendingCache = filtered
+      .slice(0, 30)
+      .map(({ score, originalTitle, channelTitle, publishedAt, ...s }) => s);
+
     trendingCacheTime = Date.now();
-    console.log(`✅ Trending cached — ${songs.length} songs for 6 hours`);
-    return songs;
+    console.log(`✅ Real trending cached — ${trendingCache.length} songs`);
+    return trendingCache;
+
   } catch (err) {
-    // If current key fails, rotate and try next
     rotateKey();
     throw err;
   }
