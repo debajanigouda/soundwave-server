@@ -313,8 +313,19 @@ async function fetchTrending() {
   }
 }
 
+// ── GEMINI TRENDING CACHE (12 hours) ─────────────────────
+const geminiCache = new Map();
+const GEMINI_TTL = 1000 * 60 * 60 * 12;
+
 async function fetchGeminiTrending(genre = "all") {
-  const genrePrompt = genre === "all" 
+  // Check cache first
+  const cached = geminiCache.get(genre);
+  if (cached && Date.now() - cached.time < GEMINI_TTL) {
+    console.log(`📦 Gemini cache hit for: ${genre}`);
+    return cached.songs;
+  }
+
+  const genrePrompt = genre === "all"
     ? "Hindi, Punjabi, Tamil, Telugu, and Global English"
     : genre;
 
@@ -322,13 +333,38 @@ async function fetchGeminiTrending(genre = "all") {
 Return ONLY a JSON array, no explanation, no markdown:
 [{"title":"Song Name","artist":"Artist Name","searchQuery":"song name artist name official audio"}]`;
 
-  const response = await axios.post(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
-    {
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.3 }
+  // Retry up to 3 times with delay
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const response = await axios.post(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
+        {
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { temperature: 0.3 }
+        }
+      );
+
+      const text = response.data.candidates[0].content.parts[0].text;
+      const clean = text.replace(/```json|```/g, "").trim();
+      const start = clean.indexOf("[");
+      const end = clean.lastIndexOf("]");
+      const songs = JSON.parse(clean.slice(start, end + 1));
+
+      // Save to cache
+      geminiCache.set(genre, { songs, time: Date.now() });
+      console.log(`✅ Gemini returned ${songs.length} songs for: ${genre}`);
+      return songs;
+
+    } catch (err) {
+      if (err.response?.status === 429 && attempt < 3) {
+        console.log(`⏳ Gemini rate limit, retrying in ${attempt * 3}s...`);
+        await new Promise(r => setTimeout(r, attempt * 3000));
+      } else {
+        throw err;
+      }
     }
-  );
+  }
+}
 
   const text = response.data.candidates[0].content.parts[0].text;
   const clean = text.replace(/```json|```/g, "").trim();
@@ -448,44 +484,40 @@ app.get("/api/health", (req, res) => {
 app.get("/api/ai-trending", async (req, res) => {
   try {
     const genre = req.query.genre || "all";
-    
-    // Get song list from Gemini
     const geminiSongs = await fetchGeminiTrending(genre);
-    
-    // Now search YouTube for each song to get real video IDs + thumbnails
-    const songResults = await Promise.all(
-      geminiSongs.slice(0, 15).map(async (song) => {
-        try {
-          const ytRes = await axios.get("https://www.googleapis.com/youtube/v3/search", {
-            params: {
-              part: "snippet",
-              q: song.searchQuery,
-              type: "video",
-              videoCategoryId: "10",
-              maxResults: 1,
-              key: getApiKey(),
-            },
-          });
-          const item = ytRes.data.items?.[0];
-          if (!item) return null;
-          return {
-            id: item.id.videoId,
-            title: song.title,
-            artist: song.artist,
-            thumbnail: item.snippet.thumbnails.high?.url || item.snippet.thumbnails.medium?.url,
-            youtubeId: item.id.videoId,
-          };
-        } catch {
-          return null;
-        }
-      })
-    );
 
-    const songs = songResults.filter(Boolean);
+    // Search YouTube one by one (not parallel) to avoid quota spike
+    const songs = [];
+    for (const song of geminiSongs.slice(0, 15)) {
+      try {
+        const ytRes = await axios.get("https://www.googleapis.com/youtube/v3/search", {
+          params: {
+            part: "snippet",
+            q: song.searchQuery,
+            type: "video",
+            videoCategoryId: "10",
+            maxResults: 1,
+            key: getApiKey(),
+          },
+        });
+        const item = ytRes.data.items?.[0];
+        if (!item) continue;
+        songs.push({
+          id: item.id.videoId,
+          title: song.title,
+          artist: song.artist,
+          thumbnail: item.snippet.thumbnails.high?.url || item.snippet.thumbnails.medium?.url,
+          youtubeId: item.id.videoId,
+        });
+      } catch {
+        continue;
+      }
+    }
+
     res.json({ success: true, songs });
 
   } catch (err) {
-    console.error("Gemini trending error:", err.message);
+    console.error("Gemini trending error:", err.response?.data || err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });
