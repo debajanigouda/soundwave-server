@@ -27,6 +27,28 @@ function rotateKey() {
   console.log(`🔄 Rotated to API key ${currentKeyIndex + 1}`);
 }
 
+async function findWorkingKey() {
+  for (let i = 0; i < YT_API_KEYS.length; i++) {
+    try {
+      await axios.get("https://www.googleapis.com/youtube/v3/search", {
+        params: {
+          part: "snippet",
+          q: "test",
+          type: "video",
+          maxResults: 1,
+          key: YT_API_KEYS[i],
+        },
+      });
+      currentKeyIndex = i;
+      console.log(`✅ Working key found: key ${i + 1}`);
+      return;
+    } catch {
+      console.log(`❌ Key ${i + 1} failed, trying next...`);
+    }
+  }
+  console.log("⚠️ No working keys found!");
+}
+
 const IS_LINUX = process.platform !== "win32";
 const YTDLP = IS_LINUX ? path.join(__dirname, "yt-dlp") : path.join(__dirname, "yt-dlp.exe");
 
@@ -322,7 +344,7 @@ Return ONLY a JSON array, no explanation, no markdown:
   const start = clean.indexOf("[");
   const end = clean.lastIndexOf("]");
   return JSON.parse(clean.slice(start, end + 1));
-}
+
 
 // ── SEARCH CACHE ──────────────────────────────────────────
 const searchCache = new Map();
