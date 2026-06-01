@@ -197,118 +197,69 @@ async function fetchTrending() {
     return trendingCache;
   }
 
-  console.log("🔄 Fetching REAL trending songs...");
+  console.log("🔄 Fetching trending songs...");
 
-  // Last 30 days
-  const last30 = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-  const last14 = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+  const searches = [
+    "new hindi songs 2026 official",
+    "new punjabi songs 2026 official", 
+    "new tamil songs 2026 official",
+    "new telugu songs 2026 official",
+    "top bollywood songs 2026",
+    "new english songs 2026 official",
+  ];
 
   try {
-    const requests = [
-      // 🇮🇳 India Hindi — last 14 days by viewCount
-      axios.get("https://www.googleapis.com/youtube/v3/search", {
-        params: {
-          part: "snippet",
-          type: "video",
-          videoCategoryId: "10",
-          regionCode: "IN",
-          relevanceLanguage: "hi",
-          order: "viewCount",
-          publishedAfter: last14,
-          maxResults: 15,
-          key: getApiKey(),
-        },
-      }).catch(() => null),
-
-      // 🇮🇳 India — last 30 days by viewCount
-      axios.get("https://www.googleapis.com/youtube/v3/search", {
-        params: {
-          part: "snippet",
-          type: "video",
-          videoCategoryId: "10",
-          regionCode: "IN",
-          order: "viewCount",
-          publishedAfter: last30,
-          maxResults: 15,
-          key: getApiKey(),
-        },
-      }).catch(() => null),
-
-      // 🎵 Punjabi trending
-      axios.get("https://www.googleapis.com/youtube/v3/search", {
-        params: {
-          part: "snippet",
-          type: "video",
-          videoCategoryId: "10",
-          regionCode: "IN",
-          relevanceLanguage: "pa",
-          order: "viewCount",
-          publishedAfter: last30,
-          maxResults: 10,
-          key: getApiKey(),
-        },
-      }).catch(() => null),
-
-      // 🌍 Global trending
-      axios.get("https://www.googleapis.com/youtube/v3/search", {
-        params: {
-          part: "snippet",
-          type: "video",
-          videoCategoryId: "10",
-          regionCode: "US",
-          order: "viewCount",
-          publishedAfter: last14,
-          maxResults: 10,
-          key: getApiKey(),
-        },
-      }).catch(() => null),
-
-      // 🎬 South India
-      axios.get("https://www.googleapis.com/youtube/v3/search", {
-        params: {
-          part: "snippet",
-          type: "video",
-          videoCategoryId: "10",
-          regionCode: "IN",
-          relevanceLanguage: "ta",
-          order: "viewCount",
-          publishedAfter: last30,
-          maxResults: 8,
-          key: getApiKey(),
-        },
-      }).catch(() => null),
-    ];
-
-    const responses = await Promise.all(requests);
-
+    // Sequential — not parallel — to avoid quota spike
     let allSongs = [];
-    for (const response of responses) {
-      if (!response?.data?.items?.length) continue;
-      const songs = response.data.items.map(item => ({
-        id: item.id.videoId,
-        title: cleanTitle(item.snippet.title),
-        artist: cleanArtist(item.snippet.channelTitle),
-        thumbnail: item.snippet.thumbnails.high?.url || item.snippet.thumbnails.medium?.url,
-        youtubeId: item.id.videoId,
-        originalTitle: item.snippet.title.toLowerCase(),
-        channelTitle: item.snippet.channelTitle.toLowerCase(),
-        publishedAt: item.snippet.publishedAt,
-      }));
-      allSongs = [...allSongs, ...songs];
+    for (const q of searches) {
+      try {
+        const res = await axios.get("https://www.googleapis.com/youtube/v3/search", {
+          params: {
+            part: "snippet",
+            q,
+            type: "video",
+            videoCategoryId: "10",
+            order: "date",
+            maxResults: 8,
+            key: getApiKey(),
+          },
+        });
+        if (!res.data.items?.length) continue;
+        const songs = res.data.items.map(item => ({
+          id: item.id.videoId,
+          title: cleanTitle(item.snippet.title),
+          artist: cleanArtist(item.snippet.channelTitle),
+          thumbnail: item.snippet.thumbnails.high?.url || item.snippet.thumbnails.medium?.url,
+          youtubeId: item.id.videoId,
+          originalTitle: item.snippet.title.toLowerCase(),
+          channelTitle: item.snippet.channelTitle.toLowerCase(),
+          publishedAt: item.snippet.publishedAt,
+        }));
+        allSongs = [...allSongs, ...songs];
+        console.log(`✅ "${q}" → ${songs.length} songs`);
+      } catch (e) {
+        console.log(`⚠️ Failed: ${q} — ${e.message}`);
+        rotateKey();
+      }
     }
 
-    console.log(`📊 Total raw songs: ${allSongs.length}`);
+    console.log(`📊 Total raw: ${allSongs.length}`);
 
-    if (allSongs.length === 0) throw new Error("No songs fetched");
+    if (allSongs.length === 0) throw new Error("All searches returned 0 results");
 
     const filtered = filterSongs(allSongs, "");
-    trendingCache = filtered.slice(0, 30);
+    trendingCache = filtered
+      .slice(0, 30)
+      .map(s => {
+        const { score, originalTitle, channelTitle, publishedAt, ...clean } = s;
+        return clean;
+      });
+
     trendingCacheTime = Date.now();
-    console.log(`✅ Trending cached — ${trendingCache.length} real trending songs`);
+    console.log(`✅ Trending cached — ${trendingCache.length} songs`);
     return trendingCache;
 
   } catch (err) {
-    rotateKey();
     throw err;
   }
 }
@@ -329,7 +280,7 @@ async function fetchGeminiTrending(genre = "all") {
     ? "Hindi, Punjabi, Tamil, Telugu, and Global English"
     : genre;
 
-  const prompt = `You are a music expert. Give me exactly 20 currently trending songs in ${genrePrompt} music as of 2025.
+  const prompt = `You are a music expert. Give me exactly 20 currently trending songs in ${genrePrompt} music as of 2026.
 Return ONLY a JSON array, no explanation, no markdown:
 [{"title":"Song Name","artist":"Artist Name","searchQuery":"song name artist name official audio"}]`;
 
