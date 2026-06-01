@@ -356,6 +356,55 @@ app.get("/api/health", (req, res) => {
     searchCache: searchCache.size,
     trendingCache: trendingCache ? `✅ ${trendingCache.length} songs, ${trendingAge} mins old` : "❌ Empty",
   });
+  // ── RELATED SONGS (Auto Radio) ────────────────────────────
+app.get("/api/related/:videoId", async (req, res) => {
+  try {
+    const { videoId } = req.params;
+    const { title, artist } = req.query;
+
+    // Search for similar songs based on current song
+    const searchQueries = [
+      `${artist} songs`,           // same artist
+      `songs like ${title}`,       // similar vibe
+      `${title} similar songs`,    // related
+    ];
+
+    // Pick random query for variety
+    const query = searchQueries[Math.floor(Math.random() * searchQueries.length)];
+
+    const response = await axios.get("https://www.googleapis.com/youtube/v3/search", {
+      params: {
+        part: "snippet",
+        q: query + " official audio",
+        type: "video",
+        videoCategoryId: "10",
+        maxResults: 15,
+        order: "relevance",
+        key: getApiKey(),
+      },
+    });
+
+    const allSongs = response.data.items
+      .filter(item => item.id.videoId !== videoId) // exclude current song
+      .map(item => ({
+        id: item.id.videoId,
+        title: cleanTitle(item.snippet.title),
+        artist: cleanArtist(item.snippet.channelTitle),
+        thumbnail: item.snippet.thumbnails.high?.url || item.snippet.thumbnails.medium?.url,
+        youtubeId: item.id.videoId,
+        originalTitle: item.snippet.title.toLowerCase(),
+        channelTitle: item.snippet.channelTitle.toLowerCase(),
+        publishedAt: item.snippet.publishedAt,
+      }));
+
+    const filtered = filterSongs(allSongs, query);
+    res.json({ success: true, songs: filtered.slice(0, 10) });
+
+  } catch (err) {
+    rotateKey();
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 });
 
 // ── KEEP ALIVE (every 14 min) ─────────────────────────────
