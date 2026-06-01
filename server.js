@@ -1,4 +1,5 @@
 require("dotenv").config();
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const express = require("express");
 const cors = require("cors");
 const axios = require("axios");
@@ -312,6 +313,30 @@ async function fetchTrending() {
   }
 }
 
+async function fetchGeminiTrending(genre = "all") {
+  const genrePrompt = genre === "all" 
+    ? "Hindi, Punjabi, Tamil, Telugu, and Global English"
+    : genre;
+
+  const prompt = `You are a music expert. Give me exactly 20 currently trending songs in ${genrePrompt} music as of 2025.
+Return ONLY a JSON array, no explanation, no markdown:
+[{"title":"Song Name","artist":"Artist Name","searchQuery":"song name artist name official audio"}]`;
+
+  const response = await axios.post(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+    {
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: { temperature: 0.3 }
+    }
+  );
+
+  const text = response.data.candidates[0].content.parts[0].text;
+  const clean = text.replace(/```json|```/g, "").trim();
+  const start = clean.indexOf("[");
+  const end = clean.lastIndexOf("]");
+  return JSON.parse(clean.slice(start, end + 1));
+}
+
 // ── SEARCH CACHE ──────────────────────────────────────────
 const searchCache = new Map();
 const SEARCH_TTL = 1000 * 60 * 30;
@@ -418,6 +443,51 @@ app.get("/api/health", (req, res) => {
       ? `✅ ${trendingCache.length} songs, ${trendingAge} mins old`
       : "❌ Empty",
   });
+});
+
+app.get("/api/ai-trending", async (req, res) => {
+  try {
+    const genre = req.query.genre || "all";
+    
+    // Get song list from Gemini
+    const geminiSongs = await fetchGeminiTrending(genre);
+    
+    // Now search YouTube for each song to get real video IDs + thumbnails
+    const songResults = await Promise.all(
+      geminiSongs.slice(0, 15).map(async (song) => {
+        try {
+          const ytRes = await axios.get("https://www.googleapis.com/youtube/v3/search", {
+            params: {
+              part: "snippet",
+              q: song.searchQuery,
+              type: "video",
+              videoCategoryId: "10",
+              maxResults: 1,
+              key: getApiKey(),
+            },
+          });
+          const item = ytRes.data.items?.[0];
+          if (!item) return null;
+          return {
+            id: item.id.videoId,
+            title: song.title,
+            artist: song.artist,
+            thumbnail: item.snippet.thumbnails.high?.url || item.snippet.thumbnails.medium?.url,
+            youtubeId: item.id.videoId,
+          };
+        } catch {
+          return null;
+        }
+      })
+    );
+
+    const songs = songResults.filter(Boolean);
+    res.json({ success: true, songs });
+
+  } catch (err) {
+    console.error("Gemini trending error:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 // ── KEEP ALIVE ────────────────────────────────────────────
