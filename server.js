@@ -205,58 +205,34 @@ async function fetchTrending() {
 
   console.log("🔄 Fetching REAL trending songs...");
 
-  // Last 30 days only — truly recent
-  const last30days = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-  const last7days = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-
   try {
-    // Fetch from multiple regions in parallel
-    const [india7, india30, global7, punjabi, south] = await Promise.all([
+    const [india, global, punjabi, south] = await Promise.all([
 
-      // 🇮🇳 India — last 7 days most viewed
-      axios.get("https://www.googleapis.com/youtube/v3/search", {
+      // 🇮🇳 India trending music chart
+      axios.get("https://www.googleapis.com/youtube/v3/videos", {
         params: {
-          part: "snippet",
-          type: "video",
+          part: "snippet,statistics",
+          chart: "mostPopular",
           videoCategoryId: "10",
           regionCode: "IN",
-          relevanceLanguage: "hi",
-          order: "viewCount",
-          publishedAfter: last7days,
+          maxResults: 20,
+          key: getApiKey(),
+        },
+      }).catch(() => null),
+
+      // 🌍 Global (US) trending music chart
+      axios.get("https://www.googleapis.com/youtube/v3/videos", {
+        params: {
+          part: "snippet,statistics",
+          chart: "mostPopular",
+          videoCategoryId: "10",
+          regionCode: "US",
           maxResults: 10,
           key: getApiKey(),
         },
       }).catch(() => null),
 
-      // 🇮🇳 India — last 30 days most viewed
-      axios.get("https://www.googleapis.com/youtube/v3/search", {
-        params: {
-          part: "snippet",
-          type: "video",
-          videoCategoryId: "10",
-          regionCode: "IN",
-          order: "viewCount",
-          publishedAfter: last30days,
-          maxResults: 15,
-          key: getApiKey(),
-        },
-      }).catch(() => null),
-
-      // 🌍 Global — last 7 days most viewed
-      axios.get("https://www.googleapis.com/youtube/v3/search", {
-        params: {
-          part: "snippet",
-          type: "video",
-          videoCategoryId: "10",
-          regionCode: "US",
-          order: "viewCount",
-          publishedAfter: last7days,
-          maxResults: 8,
-          key: getApiKey(),
-        },
-      }).catch(() => null),
-
-      // 🎵 Punjabi — last 30 days
+      // 🎵 Punjabi — search-based (no chart for language)
       axios.get("https://www.googleapis.com/youtube/v3/search", {
         params: {
           part: "snippet",
@@ -264,14 +240,14 @@ async function fetchTrending() {
           videoCategoryId: "10",
           regionCode: "IN",
           relevanceLanguage: "pa",
-          order: "viewCount",
-          publishedAfter: last30days,
+          order: "date",
+          publishedAfter: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString(),
           maxResults: 8,
           key: getApiKey(),
         },
       }).catch(() => null),
 
-      // 🎬 South India — last 30 days
+      // 🎬 South India — Tamil trending
       axios.get("https://www.googleapis.com/youtube/v3/search", {
         params: {
           part: "snippet",
@@ -279,19 +255,35 @@ async function fetchTrending() {
           videoCategoryId: "10",
           regionCode: "IN",
           relevanceLanguage: "ta",
-          order: "viewCount",
-          publishedAfter: last30days,
+          order: "date",
+          publishedAfter: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString(),
           maxResults: 8,
           key: getApiKey(),
         },
       }).catch(() => null),
     ]);
 
-    // Combine all results
     let allSongs = [];
-    const responses = [india7, india30, global7, punjabi, south];
 
-    for (const response of responses) {
+    // Videos API returns items differently — id is a string, not object
+    for (const response of [india, global]) {
+      if (!response?.data?.items) continue;
+      const songs = response.data.items.map(item => ({
+        id: item.id,                         // ← string directly
+        title: cleanTitle(item.snippet.title),
+        artist: cleanArtist(item.snippet.channelTitle),
+        thumbnail: item.snippet.thumbnails.high?.url ||
+          item.snippet.thumbnails.medium?.url,
+        youtubeId: item.id,                  // ← string directly
+        originalTitle: item.snippet.title.toLowerCase(),
+        channelTitle: item.snippet.channelTitle.toLowerCase(),
+        publishedAt: item.snippet.publishedAt,
+      }));
+      allSongs = [...allSongs, ...songs];
+    }
+
+    // Search API returns id as object — keep existing logic
+    for (const response of [punjabi, south]) {
       if (!response?.data?.items) continue;
       const songs = response.data.items.map(item => ({
         id: item.id.videoId,
@@ -309,10 +301,8 @@ async function fetchTrending() {
 
     console.log(`📊 Total raw songs fetched: ${allSongs.length}`);
 
-    // Filter and deduplicate
     const filtered = filterSongs(allSongs, "");
 
-    // Save to cache — clean up internal fields
     trendingCache = filtered
       .slice(0, 30)
       .map(({ score, originalTitle, channelTitle, publishedAt, ...s }) => s);
@@ -321,51 +311,6 @@ async function fetchTrending() {
     console.log(`✅ Real trending cached — ${trendingCache.length} songs`);
     return trendingCache;
 
-  } catch (err) {
-    rotateKey();
-    throw err;
-  }
-}
-
-// ── SEARCH CACHE (30 mins) ────────────────────────────────
-const searchCache = new Map();
-const SEARCH_TTL = 1000 * 60 * 30;
-
-async function fetchSearch(query) {
-  const cacheKey = query.toLowerCase().trim();
-  const cached = searchCache.get(cacheKey);
-  if (cached && Date.now() - cached.time < SEARCH_TTL) {
-    console.log(`📦 Serving search "${query}" from cache`);
-    return cached.songs;
-  }
-
-  console.log(`🔄 Searching YouTube for: ${query}`);
-  try {
-    const response = await axios.get("https://www.googleapis.com/youtube/v3/search", {
-      params: {
-        part: "snippet",
-        q: query + " official audio",
-        type: "video",
-        videoCategoryId: "10",
-        maxResults: 20,
-        key: getApiKey(),
-      },
-    });
-    const songs = response.data.items.map((item) => ({
-      id: item.id.videoId,
-      title: item.snippet.title
-        .replace(/\(Official.*?\)/gi, "")
-        .replace(/\[Official.*?\]/gi, "")
-        .replace(/Official (Audio|Video|Music Video)/gi, "")
-        .replace(/\|.*$/g, "")
-        .trim(),
-      artist: item.snippet.channelTitle.replace(/ - Topic$/i, "").trim(),
-      thumbnail: item.snippet.thumbnails.medium.url,
-      youtubeId: item.id.videoId,
-    }));
-    searchCache.set(cacheKey, { songs, time: Date.now() });
-    console.log(`✅ Search "${query}" cached for 30 mins`);
-    return songs;
   } catch (err) {
     rotateKey();
     throw err;
