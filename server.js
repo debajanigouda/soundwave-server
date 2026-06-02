@@ -22,7 +22,6 @@ function rotateKey() {
   currentKeyIndex = (currentKeyIndex + 1) % YT_API_KEYS.length;
   console.log(`🔄 Rotated to API key ${currentKeyIndex + 1}`);
 }
-
 async function findWorkingKey() {
   for (let i = 0; i < YT_API_KEYS.length; i++) {
     try {
@@ -47,7 +46,7 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// ── URL CACHE ─────────────────────────────────────────────
+// ── URL CACHE (1 hour) ────────────────────────────────────
 const urlCache = new Map();
 const CACHE_TTL = 1000 * 60 * 60;
 function getCached(videoId) {
@@ -71,24 +70,35 @@ function cleanArtist(channel) {
   return channel.replace(/ - Topic$/i, "").replace(/VEVO$/i, "").replace(/official$/i, "").trim();
 }
 
-// ── BAD CHANNELS & CONTENT ────────────────────────────────
-const BAD_CHANNELS = [
-  "7clouds","phantom lyrics","lyrics vibes","magic of music","snippetlyrics",
-  "latinhype","latin city","syrebralvibes","pizza music","more albums",
-  "sing king","nonstop","status video","whatsapp","bass boosted",
-  "slowed reverb","8d audio","lofi beats","mashup king","cover songs",
-  "top tracks","music nation","hits music","best songs","viral songs",
-];
-function isBadChannel(ch) {
-  const l = ch.toLowerCase();
-  return BAD_CHANNELS.some(b => l.includes(b));
-}
-function isBadTitle(title) {
-  const l = title.toLowerCase();
-  return l.includes("karaoke") || l.includes("ringtone") || l.includes("reaction") ||
-    l.includes("whatsapp status") || l.includes("8d audio") ||
-    l.includes("slowed") || l.includes("bass boost") ||
-    (l.includes("cover") && !l.includes("official"));
+// ── BAD CONTENT FILTER ────────────────────────────────────
+// Blocks mashups, covers, karaoke, reaction, lofi, etc.
+function isBadContent(title, channel) {
+  const t = title.toLowerCase();
+  const c = (channel || "").toLowerCase();
+
+  const badTitleWords = [
+    "mashup", "karaoke", "ringtone", "reaction", "whatsapp status",
+    "8d audio", "slowed", "reverb", "bass boost", "lofi", "lo-fi",
+    "jukebox", "nonstop", "unplugged", "acoustic", "live at",
+    "live from", "live version", "tribute", "full album",
+    "vs ", " x ", "medley", "mix tape", "mixtape",
+  ];
+  if (badTitleWords.some(w => t.includes(w))) return true;
+
+  // cover is bad unless it's from an official channel
+  if (t.includes("cover") && !c.includes("vevo") && !c.includes("official")) return true;
+
+  const badChannels = [
+    "7clouds", "phantom lyrics", "lyrics vibes", "magic of music",
+    "snippetlyrics", "latinhype", "latin city", "syrebralvibes",
+    "pizza music", "more albums", "sing king", "nonstop",
+    "bass boosted", "slowed reverb", "8d", "lofi", "mashup",
+    "top tracks", "music nation", "hits music", "best songs",
+    "viral songs", "mr jatt", "djpunjab", "pagalworld",
+  ];
+  if (badChannels.some(b => c.includes(b))) return true;
+
+  return false;
 }
 
 // ── STREAM URL ────────────────────────────────────────────
@@ -108,26 +118,31 @@ function fetchStreamUrl(videoId) {
 }
 
 // ── DEEZER FETCH ──────────────────────────────────────────
+// Strategy: fetch SPECIFIC song searches (not artist names)
+// so we get actual recent songs, not old greatest hits
 async function fetchDeezerTracks() {
   const sources = [
-    // ✅ Global chart — always works
-    { url: "https://api.deezer.com/chart/0/tracks?limit=25", name: "🌍 Global" },
-    // ✅ Hindi Bollywood — by popular artists
-    { url: "https://api.deezer.com/search/track?q=arijit+singh+2025&order=RANKING&limit=10", name: "🎵 Arijit Singh" },
-    { url: "https://api.deezer.com/search/track?q=atif+aslam+2025&order=RANKING&limit=8", name: "🎵 Atif Aslam" },
-    { url: "https://api.deezer.com/search/track?q=bollywood+hits+2025&order=RANKING&limit=15", name: "🎬 Bollywood 2025" },
-    { url: "https://api.deezer.com/search/track?q=new+hindi+song+2025&order=RANKING&limit=15", name: "🇮🇳 Hindi New" },
-    // ✅ Punjabi
-    { url: "https://api.deezer.com/search/track?q=diljit+dosanjh+2025&order=RANKING&limit=8", name: "🎤 Diljit" },
-    { url: "https://api.deezer.com/search/track?q=ap+dhillon+2025&order=RANKING&limit=8", name: "🎤 AP Dhillon" },
-    { url: "https://api.deezer.com/search/track?q=punjabi+2025&order=RANKING&limit=10", name: "🎤 Punjabi" },
-    // ✅ Tamil & Telugu
-    { url: "https://api.deezer.com/search/track?q=tamil+songs+2025&order=RANKING&limit=10", name: "🎭 Tamil" },
-    { url: "https://api.deezer.com/search/track?q=telugu+songs+2025&order=RANKING&limit=10", name: "🎭 Telugu" },
-    // ✅ K-pop
-    { url: "https://api.deezer.com/search/track?q=bts+blackpink+2025&order=RANKING&limit=8", name: "🇰🇷 K-pop" },
-    // ✅ Latin
-    { url: "https://api.deezer.com/search/track?q=bad+bunny+reggaeton+2025&order=RANKING&limit=8", name: "💃 Latin" },
+    // 🌍 Global chart — Deezer's real-time global top songs
+    { url: "https://api.deezer.com/chart/0/tracks?limit=20", name: "🌍 Global Chart" },
+
+    // 🇮🇳 Hindi / Bollywood — specific 2025/2026 song searches
+    { url: "https://api.deezer.com/search/track?q=hindi+song+2026&order=RANKING&limit=15", name: "🇮🇳 Hindi 2026" },
+    { url: "https://api.deezer.com/search/track?q=bollywood+2026&order=RANKING&limit=15", name: "🎬 Bollywood 2026" },
+    { url: "https://api.deezer.com/search/track?q=hindi+new+song&order=RANKING&limit=10", name: "🎵 Hindi New" },
+
+    // 🎤 Punjabi
+    { url: "https://api.deezer.com/search/track?q=punjabi+song+2026&order=RANKING&limit=10", name: "🎤 Punjabi 2026" },
+    { url: "https://api.deezer.com/search/track?q=punjabi+new+song&order=RANKING&limit=10", name: "🎤 Punjabi New" },
+
+    // 🎭 South India
+    { url: "https://api.deezer.com/search/track?q=tamil+song+2026&order=RANKING&limit=8", name: "🎭 Tamil 2026" },
+    { url: "https://api.deezer.com/search/track?q=telugu+song+2026&order=RANKING&limit=8", name: "🎭 Telugu 2026" },
+
+    // 🇰🇷 K-pop
+    { url: "https://api.deezer.com/search/track?q=kpop+2026&order=RANKING&limit=8", name: "🇰🇷 K-pop 2026" },
+
+    // 💃 Latin
+    { url: "https://api.deezer.com/search/track?q=reggaeton+2026&order=RANKING&limit=8", name: "💃 Latin 2026" },
   ];
 
   let allTracks = [];
@@ -135,12 +150,17 @@ async function fetchDeezerTracks() {
     try {
       const res = await axios.get(src.url, { timeout: 8000 });
       const items = res.data.data || [];
-      const tracks = items.map(t => ({
-        deezerTitle: t.title,
-        deezerArtist: t.artist?.name || "",
-        deezerAlbumArt: t.album?.cover_xl || t.album?.cover_big || t.album?.cover_medium || "",
-        searchQuery: `${t.title} ${t.artist?.name || ""} official audio`,
-      }));
+
+      const tracks = items
+        // Filter out mashups/covers/etc at Deezer level too
+        .filter(t => !isBadContent(t.title, ""))
+        .map(t => ({
+          deezerTitle: t.title,
+          deezerArtist: t.artist?.name || "",
+          deezerAlbumArt: t.album?.cover_xl || t.album?.cover_big || t.album?.cover_medium || "",
+          searchQuery: `${t.title} ${t.artist?.name || ""} official audio`,
+        }));
+
       allTracks = [...allTracks, ...tracks];
       console.log(`✅ Deezer ${src.name} → ${tracks.length} tracks`);
     } catch (e) {
@@ -148,12 +168,12 @@ async function fetchDeezerTracks() {
     }
   }
 
-  // Deduplicate
-  const seen = new Set();
+  // Deduplicate by title+artist
+  const seenSongs = new Set();
   return allTracks.filter(s => {
     const key = `${s.deezerTitle}-${s.deezerArtist}`.toLowerCase().replace(/\s/g, "");
-    if (seen.has(key)) return false;
-    seen.add(key);
+    if (seenSongs.has(key)) return false;
+    seenSongs.add(key);
     return true;
   });
 }
@@ -175,8 +195,15 @@ async function fetchTrending() {
   if (deezerTracks.length === 0) throw new Error("Deezer returned 0 tracks");
 
   const songs = [];
+  const seenArtists = new Set(); // max 1 song per artist
+
   for (const track of deezerTracks) {
     if (songs.length >= 30) break;
+
+    // Max 1 song per artist in trending
+    const artistKey = track.deezerArtist.toLowerCase().trim();
+    if (seenArtists.has(artistKey)) continue;
+
     try {
       const ytRes = await axios.get("https://www.googleapis.com/youtube/v3/search", {
         params: {
@@ -184,20 +211,28 @@ async function fetchTrending() {
           q: track.searchQuery,
           type: "video",
           videoCategoryId: "10",
-          maxResults: 3,
+          maxResults: 5,
           key: getApiKey(),
         },
       });
+
       const items = ytRes.data.items || [];
-      const item = items.find(i => !isBadChannel(i.snippet.channelTitle) && !isBadTitle(i.snippet.title)) || items[0];
+      // Pick first result that passes the bad content filter
+      const item = items.find(i =>
+        !isBadContent(i.snippet.title, i.snippet.channelTitle)
+      ) || items[0];
+
       if (!item) continue;
+
+      seenArtists.add(artistKey);
       songs.push({
         id: item.id.videoId,
-        title: track.deezerTitle,
-        artist: track.deezerArtist,
-        thumbnail: track.deezerAlbumArt || item.snippet.thumbnails.high?.url,
+        title: track.deezerTitle,       // ✅ Real title from Deezer
+        artist: track.deezerArtist,     // ✅ Real artist from Deezer
+        thumbnail: track.deezerAlbumArt || item.snippet.thumbnails.high?.url || item.snippet.thumbnails.medium?.url,
         youtubeId: item.id.videoId,
       });
+
       console.log(`🎵 ${track.deezerTitle} — ${track.deezerArtist}`);
     } catch (e) {
       console.log(`⚠️ YT match failed: "${track.deezerTitle}" — ${e.message}`);
@@ -207,6 +242,7 @@ async function fetchTrending() {
 
   console.log(`✅ Final trending: ${songs.length} songs`);
   if (songs.length === 0) throw new Error("No YouTube matches found");
+
   trendingCache = songs;
   trendingCacheTime = Date.now();
   return trendingCache;
@@ -221,10 +257,13 @@ async function searchSongs(query) {
   const cached = searchCache.get(cacheKey);
   if (cached && Date.now() - cached.time < SEARCH_TTL) return cached.songs;
 
-  // Get best metadata from Deezer first
+  // Step 1: Get correct metadata from Deezer
   let deezerMeta = null;
   try {
-    const dRes = await axios.get(`https://api.deezer.com/search/track?q=${encodeURIComponent(query)}&limit=1`, { timeout: 5000 });
+    const dRes = await axios.get(
+      `https://api.deezer.com/search/track?q=${encodeURIComponent(query)}&limit=1`,
+      { timeout: 5000 }
+    );
     const top = dRes.data.data?.[0];
     if (top) deezerMeta = {
       title: top.title,
@@ -233,7 +272,7 @@ async function searchSongs(query) {
     };
   } catch {}
 
-  // YouTube search
+  // Step 2: YouTube search
   const response = await axios.get("https://www.googleapis.com/youtube/v3/search", {
     params: {
       part: "snippet",
@@ -246,25 +285,35 @@ async function searchSongs(query) {
     },
   });
 
-  const seen = new Set();
+  // Step 3: Filter + deduplicate
+  const seenTitles = new Set();
   const songs = [];
+
   for (const item of response.data.items) {
+    const rawTitle = item.snippet.title;
     const channel = item.snippet.channelTitle;
-    const title = cleanTitle(item.snippet.title);
-    if (isBadChannel(channel) || isBadTitle(title)) continue;
+    const title = cleanTitle(rawTitle);
+
+    // Skip bad content
+    if (isBadContent(rawTitle, channel)) continue;
+
+    // Deduplicate by first 3 words of title
     const key = title.toLowerCase().replace(/[^a-z0-9\s]/g, "").trim().split(" ").slice(0, 3).join(" ");
-    if (seen.has(key)) continue;
-    seen.add(key);
+    if (seenTitles.has(key)) continue;
+    seenTitles.add(key);
+
+    const isFirst = songs.length === 0;
     songs.push({
       id: item.id.videoId,
-      title: songs.length === 0 && deezerMeta ? deezerMeta.title : title,
-      artist: songs.length === 0 && deezerMeta ? deezerMeta.artist : cleanArtist(channel),
-      thumbnail: songs.length === 0 && deezerMeta?.albumArt
+      title: isFirst && deezerMeta ? deezerMeta.title : title,
+      artist: isFirst && deezerMeta ? deezerMeta.artist : cleanArtist(channel),
+      thumbnail: isFirst && deezerMeta?.albumArt
         ? deezerMeta.albumArt
         : item.snippet.thumbnails.high?.url || item.snippet.thumbnails.medium?.url,
       youtubeId: item.id.videoId,
     });
-    if (songs.length >= 15) break;
+
+    if (songs.length >= 12) break;
   }
 
   searchCache.set(cacheKey, { songs, time: Date.now() });
@@ -317,11 +366,13 @@ app.get("/api/health", (req, res) => {
     ytdlp: YTDLP,
     urlCache: urlCache.size,
     searchCache: searchCache.size,
-    trendingCache: trendingCache ? `✅ ${trendingCache.length} songs, ${trendingAge} mins old` : "❌ Empty",
+    trendingCache: trendingCache
+      ? `✅ ${trendingCache.length} songs, ${trendingAge} mins old`
+      : "❌ Empty",
   });
 });
 
-// ── KEEP ALIVE ────────────────────────────────────────────
+// ── KEEP ALIVE (every 14 min) ─────────────────────────────
 setInterval(() => {
   fetch("https://soundwave-server.onrender.com/api/health")
     .then(() => console.log("🏓 Keep-alive ping sent"))
@@ -333,7 +384,7 @@ app.listen(PORT, () => {
   console.log(`🔑 YouTube API: ${YT_API_KEYS.length} keys loaded`);
   console.log(`🖥️  Platform: ${process.platform}`);
   console.log(`🎬 yt-dlp: ${YTDLP}`);
-  console.log(`⚡ Deezer (worldwide) + YouTube streaming\n`);
+  console.log(`⚡ Deezer (worldwide free) + YouTube streaming\n`);
   findWorkingKey().then(() =>
     fetchTrending().catch(err => console.log("⚠️ Startup prefetch failed:", err.message))
   );
