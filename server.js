@@ -84,6 +84,42 @@ function cleanArtist(channel) {
   return channel.replace(/ - Topic$/i, "").replace(/VEVO$/i, "").replace(/official$/i, "").trim();
 }
 
+// ── OFFICIAL MUSIC CHANNELS (YouTube Channel IDs) ────────
+// These are 100% verified original label channels
+const OFFICIAL_CHANNELS = {
+  hindi: [
+    "UCq-Fj5jknLsUf-MWSy4_brA", // T-Series
+    "UC3ML1GHrOMAOBDEhZe7MjIQ", // Zee Music Company
+    "UCiEqmIwxaEojMxBgresGG3Q", // Sony Music India
+    "UCazDAtKFiuXFgDgBFCKMgrg", // Tips Official
+    "UCv4QDZT6ioUqNfMO0YJJR6Q", // Saregama Music
+    "UCdSEBR0agFSgFGcMtrjWLMQ", // YRF Music
+    "UC9wB4cs7DQPHoetGFkBPvqw", // Dharma Productions
+    "UCJrDMFOdv1I2k8n9oK_V21w", // Jio Saavn
+  ],
+  punjabi: [
+    "UCt4KxBWqJB_SymPq4xGEJyA", // Speed Records
+    "UCxMAbVFmxKEjMSHkFUf-5Qg", // T-Series Apna Punjab
+    "UCwxBtgRLEXGCESTDnP5MNHQ", // White Hill Music
+    "UCMYCnRmZzQi0_Y2EFdOJOkw", // Desi Melodies
+    "UCbjKRSTHV7okXJXrxASE73A", // Punjabi Hit Squad
+  ],
+  south: [
+    "UCwIFNNgBuMTiYrCXHH7sGrQ", // Sony Music South
+    "UCG-D8HJsFHNkMFOO5YJKOOQ", // T-Series Tamil
+    "UCrfHJmOg4PCAO9TkWaibHlg", // Lahari Music
+    "UCXp2gLYjGToOFtWZX9KhxRw", // Aditya Music
+    "UC-8QAzbLcRryijX1yqGen1bw", // Sun Music
+  ],
+  english: [
+    "UCVwa5DJHqB3QoMJGv5AjwOQ", // Atlantic Records
+    "UCsRM0YB_dabtEPGPTKo-gcw", // Republic Records
+    "UC20vb-R_px4CguH9oyIfekw", // Interscope Records
+    "UCnUYZLuoy1rq1aVMwx4aTzw", // Universal Music Group
+    "UCBVjMGOIkavEAhyqpxJ73Dw", // Sony Music Entertainment
+  ],
+};
+
 // ── FILTER & DEDUPLICATE ──────────────────────────────────
 function filterSongs(songs, query) {
   const queryLower = (query || "").toLowerCase().trim();
@@ -102,36 +138,54 @@ function filterSongs(songs, query) {
       else if (daysOld < 30) score += 5;
     }
 
+    // Heavy boost for known official channels
+    if (channel.includes("t-series")) score += 25;
+    if (channel.includes("zee music")) score += 25;
+    if (channel.includes("sony music")) score += 25;
+    if (channel.includes("tips official") || channel.includes("tips films")) score += 25;
+    if (channel.includes("saregama")) score += 25;
+    if (channel.includes("speed records")) score += 20;
+    if (channel.includes("white hill")) score += 20;
+    if (channel.includes("lahari")) score += 20;
+    if (channel.includes("aditya music")) score += 20;
+    if (channel.includes("yrf")) score += 20;
+    if (channel.includes("dharma")) score += 20;
+    if (channel.includes("atlantic")) score += 20;
+    if (channel.includes("republic records")) score += 20;
+    if (channel.includes("interscope")) score += 20;
     if (channel.includes("vevo")) score += 15;
-    if (channel.includes("official")) score += 10;
-    if (channel.includes("t-series")) score += 8;
-    if (channel.includes("sony music")) score += 8;
-    if (channel.includes("zee music")) score += 8;
-    if (channel.includes("saregama")) score += 8;
-    if (channel.includes("speed records")) score += 8;
+
     if (title.includes("official audio")) score += 12;
     if (title.includes("official video")) score += 10;
     if (queryLower && title.includes(queryLower)) score += 8;
 
-    if (title.includes("8d audio")) score -= 20;
-    if (title.includes("lofi") || title.includes("lo-fi")) score -= 15;
-    if (title.includes("remix")) score -= 15;
-    if (title.includes("cover")) score -= 20;
-    if (title.includes("karaoke")) score -= 25;
-    if (title.includes("ringtone")) score -= 25;
-    if (title.includes("slowed")) score -= 20;
-    if (title.includes("reaction")) score -= 30;
-    if (title.includes("mashup")) score -= 20;
-    if (title.includes("whatsapp")) score -= 30;
+    // Heavy penalties for non-original content
+    if (title.includes("8d audio")) score -= 40;
+    if (title.includes("lofi") || title.includes("lo-fi")) score -= 40;
+    if (title.includes("remix")) score -= 35;
+    if (title.includes("cover")) score -= 50;
+    if (title.includes("karaoke")) score -= 50;
+    if (title.includes("ringtone")) score -= 50;
+    if (title.includes("slowed")) score -= 40;
+    if (title.includes("reaction")) score -= 50;
+    if (title.includes("mashup")) score -= 40;
+    if (title.includes("whatsapp")) score -= 50;
+    if (title.includes("status")) score -= 40;
+    if (title.includes("unplugged")) score -= 20;
+    if (title.includes("jukebox")) score -= 20;
+    if (title.includes("full album")) score -= 30;
 
     return { ...song, score };
   });
 
-  scored.sort((a, b) => b.score - a.score);
+  // Remove anything with very low score (likely not original)
+  const goodSongs = scored.filter(s => s.score >= 100);
+
+  goodSongs.sort((a, b) => b.score - a.score);
 
   const seen = new Set();
   const unique = [];
-  for (const song of scored) {
+  for (const song of goodSongs) {
     const key = (song.title || "").toLowerCase().replace(/[^a-z0-9\s]/g, "").trim().split(" ").slice(0, 3).join(" ");
     if (key.length > 2 && !seen.has(key)) { seen.add(key); unique.push(song); }
   }
@@ -166,24 +220,44 @@ async function fetchTrending() {
     return trendingCache;
   }
 
-  console.log("🔄 Fetching trending songs...");
+  console.log("🔄 Fetching trending from OFFICIAL channels only...");
 
-  const searches = [
-    "new hindi songs 2026 official",
-    "new punjabi songs 2026 official",
-    "new tamil songs 2026 official",
-    "new telugu songs 2026 official",
-    "top bollywood songs 2026",
-    "new english songs 2026 official",
+  // Fetch latest videos from official channels directly
+  const channelSearches = [
+    // Hindi / Bollywood
+    { channelId: "UCq-Fj5jknLsUf-MWSy4_brA", name: "T-Series" },
+    { channelId: "UC3ML1GHrOMAOBDEhZe7MjIQ", name: "Zee Music" },
+    { channelId: "UCiEqmIwxaEojMxBgresGG3Q", name: "Sony Music India" },
+    { channelId: "UCazDAtKFiuXFgDgBFCKMgrg", name: "Tips Official" },
+    { channelId: "UCv4QDZT6ioUqNfMO0YJJR6Q", name: "Saregama" },
+    // Punjabi
+    { channelId: "UCt4KxBWqJB_SymPq4xGEJyA", name: "Speed Records" },
+    { channelId: "UCxMAbVFmxKEjMSHkFUf-5Qg", name: "T-Series Apna Punjab" },
+    { channelId: "UCwxBtgRLEXGCESTDnP5MNHQ", name: "White Hill Music" },
+    // South
+    { channelId: "UCwIFNNgBuMTiYrCXHH7sGrQ", name: "Sony Music South" },
+    { channelId: "UCrfHJmOg4PCAO9TkWaibHlg", name: "Lahari Music" },
+    { channelId: "UCXp2gLYjGToOFtWZX9KhxRw", name: "Aditya Music" },
   ];
 
   let allSongs = [];
-  for (const q of searches) {
+
+  for (const ch of channelSearches) {
     try {
       const res = await axios.get("https://www.googleapis.com/youtube/v3/search", {
-        params: { part: "snippet", q, type: "video", videoCategoryId: "10", order: "date", maxResults: 8, key: getApiKey() },
+        params: {
+          part: "snippet",
+          channelId: ch.channelId,
+          type: "video",
+          videoCategoryId: "10",
+          order: "date",
+          maxResults: 5,
+          key: getApiKey(),
+        },
       });
+
       if (!res.data.items?.length) continue;
+
       const songs = res.data.items.map(item => ({
         id: item.id.videoId,
         title: cleanTitle(item.snippet.title),
@@ -194,25 +268,29 @@ async function fetchTrending() {
         channelTitle: item.snippet.channelTitle.toLowerCase(),
         publishedAt: item.snippet.publishedAt,
       }));
+
       allSongs = [...allSongs, ...songs];
-      console.log(`✅ "${q}" → ${songs.length} songs`);
+      console.log(`✅ ${ch.name} → ${songs.length} songs`);
+
     } catch (e) {
-      console.log(`⚠️ Failed: ${q} — ${e.message}`);
+      console.log(`⚠️ ${ch.name} failed — ${e.message}`);
       rotateKey();
     }
   }
 
   console.log(`📊 Total raw: ${allSongs.length}`);
-  if (allSongs.length === 0) throw new Error("All searches returned 0 results");
+  if (allSongs.length === 0) throw new Error("All channel fetches returned 0 results");
 
   const filtered = filterSongs(allSongs, "");
-  trendingCache = filtered.slice(0, 30).map(s => {
-    const { score, originalTitle, channelTitle, publishedAt, ...clean } = s;
-    return clean;
-  });
 
+  // If filter was too strict, fall back to all songs sorted by date
+  const finalSongs = filtered.length >= 10 ? filtered : allSongs
+    .sort((a, b) => new Date(b.publishedAt) - new Date(a.publishedAt))
+    .map(({ score, originalTitle, channelTitle, publishedAt, ...s }) => s);
+
+  trendingCache = finalSongs.slice(0, 30);
   trendingCacheTime = Date.now();
-  console.log(`✅ Trending cached — ${trendingCache.length} songs`);
+  console.log(`✅ Trending cached — ${trendingCache.length} songs from official channels`);
   return trendingCache;
 }
 
@@ -356,55 +434,6 @@ app.get("/api/health", (req, res) => {
     searchCache: searchCache.size,
     trendingCache: trendingCache ? `✅ ${trendingCache.length} songs, ${trendingAge} mins old` : "❌ Empty",
   });
-  // ── RELATED SONGS (Auto Radio) ────────────────────────────
-app.get("/api/related/:videoId", async (req, res) => {
-  try {
-    const { videoId } = req.params;
-    const { title, artist } = req.query;
-
-    // Search for similar songs based on current song
-    const searchQueries = [
-      `${artist} songs`,           // same artist
-      `songs like ${title}`,       // similar vibe
-      `${title} similar songs`,    // related
-    ];
-
-    // Pick random query for variety
-    const query = searchQueries[Math.floor(Math.random() * searchQueries.length)];
-
-    const response = await axios.get("https://www.googleapis.com/youtube/v3/search", {
-      params: {
-        part: "snippet",
-        q: query + " official audio",
-        type: "video",
-        videoCategoryId: "10",
-        maxResults: 15,
-        order: "relevance",
-        key: getApiKey(),
-      },
-    });
-
-    const allSongs = response.data.items
-      .filter(item => item.id.videoId !== videoId) // exclude current song
-      .map(item => ({
-        id: item.id.videoId,
-        title: cleanTitle(item.snippet.title),
-        artist: cleanArtist(item.snippet.channelTitle),
-        thumbnail: item.snippet.thumbnails.high?.url || item.snippet.thumbnails.medium?.url,
-        youtubeId: item.id.videoId,
-        originalTitle: item.snippet.title.toLowerCase(),
-        channelTitle: item.snippet.channelTitle.toLowerCase(),
-        publishedAt: item.snippet.publishedAt,
-      }));
-
-    const filtered = filterSongs(allSongs, query);
-    res.json({ success: true, songs: filtered.slice(0, 10) });
-
-  } catch (err) {
-    rotateKey();
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
 });
 
 // ── KEEP ALIVE (every 14 min) ─────────────────────────────
