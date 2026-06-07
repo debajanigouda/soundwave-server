@@ -320,6 +320,58 @@ async function searchSongs(query) {
   return songs;
 }
 
+// ── AI DISCOVER ───────────────────────────────────────────
+app.post("/api/ai-discover", async (req, res) => {
+  try {
+    const { vibe } = req.body;
+    if (!vibe) return res.status(400).json({ error: "Vibe required" });
+
+    const anthropicKey = process.env.ANTHROPIC_API_KEY;
+    if (!anthropicKey) return res.status(500).json({ error: "Anthropic API key not configured" });
+
+    const aiRes = await axios.post(
+      "https://api.anthropic.com/v1/messages",
+      {
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 500,
+        messages: [{
+          role: "user",
+          content: `You are a music expert. A user wants to listen to music matching this vibe or mood: "${vibe}"
+
+Generate exactly 6 specific song search queries for YouTube Music that perfectly match this vibe.
+Each query should be a real song title + artist name that fits the mood.
+Mix popular and lesser-known tracks. Include both English and Hindi/Indian songs if the vibe suits it.
+
+Respond ONLY with a JSON array of 6 strings, no explanation, no markdown, no backticks.
+Example format: ["Blinding Lights The Weeknd","Tum Hi Ho Arijit Singh","Night Owl Galimatias","Raataan Lambiyan Jubin Nautiyal","Midnight Rain Taylor Swift","Khairiyat Arijit Singh"]`
+        }],
+      },
+      {
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": anthropicKey,
+          "anthropic-version": "2023-06-01",
+        },
+        timeout: 20000,
+      }
+    );
+
+    const text = aiRes.data.content?.[0]?.text || "[]";
+    let queries = [];
+    try {
+      queries = JSON.parse(text.trim());
+    } catch {
+      const matches = text.match(/"([^"]+)"/g);
+      queries = matches ? matches.map(m => m.replace(/"/g, "")) : [];
+    }
+
+    res.json({ success: true, queries });
+  } catch (err) {
+    console.error("AI discover error:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // ── ROUTES ────────────────────────────────────────────────
 app.get("/api/search", async (req, res) => {
   try {
